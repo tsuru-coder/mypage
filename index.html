@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>マイページ｜リカバリー整骨院</title>
+<!-- 患者マイページ（LINE のリッチメニューから開く）
+     ・LINE の中で開き（LIFF）、LINE が確かめた本人の証明を窓口（Apps Script）に送って、その人の分だけを表示する
+     ・このページ自体には患者さんのデータは入っていない
+     ・設定：下の LIFF_ID と API_URL を入れる。?demo=1 を付けると、見本のデータで見た目だけ確かめられる -->
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js" charset="utf-8"></script>
+<style>
+  :root { --main: #0e7c70; --main-d: #075e54; --weak: #e8f5f2; --bg: #f4f6f5; --line: #e1e7e5; --sub: #6b7a76; --text: #1c2624; --warn: #b45309; --danger: #b42318; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  header { background: var(--main); color: #fff; padding: calc(14px + env(safe-area-inset-top)) 16px 16px; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .02em; }
+  header p { margin: 2px 0 0; font-size: 12.5px; opacity: .85; }
+  main { padding: 14px 16px calc(28px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+  .card { background: #fff; border-radius: 16px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .who b { font-size: 18px; } .who span { color: var(--sub); font-size: 13px; }
+  h2 { font-size: 13px; color: var(--sub); margin: 14px 0 8px; font-weight: 700; letter-spacing: .04em; }
+  h2:first-of-type { margin-top: 4px; }
+  .resv { border: 1.5px solid #bfe2d9; background: var(--weak); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+  .resv .d { font-size: 17px; font-weight: 800; color: var(--main-d); }
+  .resv .m { font-size: 13.5px; color: var(--text); margin-top: 2px; }
+  .resv.first { border-color: var(--main); background: #fff; box-shadow: 0 0 0 3px var(--weak); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 99px; background: var(--main); color: #fff; margin-left: 6px; vertical-align: 2px; }
+  .none { color: var(--sub); font-size: 14px; background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .tk { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+  .tk .n { font-weight: 700; }
+  .tk .r { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+  .tk .big { font-size: 22px; font-weight: 800; color: var(--main-d); } .tk .big small { font-size: 13px; font-weight: 600; color: var(--sub); }
+  .tk .ex { font-size: 12.5px; color: var(--sub); }
+  .tk .ex.soon { color: var(--warn); font-weight: 700; }
+  .dots { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .dots i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--main); }
+  .dots i.used { background: var(--main); opacity: .25; border-color: transparent; }
+  .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 13px; font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; background: var(--main); color: #fff; }
+  .btn.ghost { background: #fff; color: var(--main-d); border: 1.5px solid var(--main); }
+  .btn.link { background: none; color: var(--sub); font-weight: 600; font-size: 13px; padding: 8px; }
+  .btn:disabled { opacity: .5; }
+  label { display: block; font-size: 13px; font-weight: 700; color: var(--sub); margin: 12px 0 4px; }
+  input, select { width: 100%; font: inherit; font-size: 16px; padding: 11px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; color: var(--text); }
+  input:focus, select:focus { outline: none; border-color: var(--main); }
+  .msg { margin-top: 10px; font-size: 13.5px; color: var(--danger); font-weight: 600; }
+  .note { font-size: 12.5px; color: var(--sub); }
+  .center { text-align: center; padding: 40px 0; color: var(--sub); }
+  .spin { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--main); border-radius: 50%; margin: 0 auto 10px; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .upd { font-size: 12px; color: var(--sub); text-align: center; margin-top: 4px; }
+  /* Web予約 */
+  .btn.book { margin-top: 10px; }
+  .resv .cx { float: right; border: 1px solid var(--line); background: #fff; color: var(--danger); font: inherit; font-size: 12px; font-weight: 700; border-radius: 99px; padding: 2px 10px; cursor: pointer; }
+  .step { font-size: 13px; font-weight: 800; color: var(--main-d); margin: 4px 0 8px; }
+  .step span { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 50%; background: var(--main); color: #fff; font-size: 12px; margin-right: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1.5px solid var(--line); background: #fff; color: var(--text); font: inherit; font-size: 14px; font-weight: 700; border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+  .chip.on { border-color: var(--main); background: var(--main); color: #fff; }
+  .chip small { display: block; font-size: 11px; font-weight: 600; opacity: .75; }
+  .days { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+  .days .chip { flex: 0 0 auto; text-align: center; min-width: 64px; padding: 6px 8px; }
+  .days .chip.sat { color: #1d4ed8; } .days .chip.sun { color: var(--danger); } .days .chip.on { color: #fff; }
+  .times { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .times .chip { padding: 10px 0; text-align: center; }
+  .sum { background: var(--weak); border-radius: 12px; padding: 12px; margin: 10px 0; }
+  .sum b { font-size: 17px; color: var(--main-d); }
+  .ok { text-align: center; padding: 10px 0; } .ok .ic { font-size: 40px; }
+</style>
+</head>
+<body>
+<header><h1>リカバリー整骨院 マイページ</h1><p>次回のご予約・回数券・フリーパスの確認と、ご予約ができます</p></header>
+<main id="app"><div class="center"><div class="spin"></div>読み込み中…</div></main>
+<script>
+// ===== 設定（LINE Developers・Apps Script の準備ができたら入れる） =====
+const LIFF_ID = '';   // LIFF アプリのID（例：2001234567-AbCdEfGh）
+const API_URL = 'https://script.google.com/macros/s/AKfycbwfmdjExwgXjaAWHggFsubUZ9Ua3rvell-RXybxHxgRIIdeaew_pPzHLziY6EQA53tq3g/exec';   // 窓口（Apps Script のウェブアプリ）の URL（…/exec）
+
+const app = document.getElementById('app');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const WD = ['日', '月', '火', '水', '木', '金', '土'];
+const jd = d => { const x = new Date(d + 'T00:00:00'); return (x.getMonth() + 1) + '月' + x.getDate() + '日（' + WD[x.getDay()] + '）'; };
+const ymdLocal = x => x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); // 日本時間の日付
+const daysTo = d => Math.round((new Date(d + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
+const demo = new URLSearchParams(location.search).get('demo') === '1';
+let state = { clinics: [], patients: [] };
+
+/** 窓口を呼ぶ（LINE の証明をつけて） */
+async function call(action, extra) {
+  if (demo) return demoCall(action, extra);
+  const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action: action, idToken: liff.getIDToken() }, extra || {})) });
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'うまく読み込めませんでした');
+  return j.data;
+}
+
+function render() {
+  if (!state.patients.length) return renderLink(true);
+  app.innerHTML = state.patients.map(p => {
+    const next = p.next.length ? p.next.map((r, i) => '<div class="resv' + (i === 0 ? ' first' : '') + '">' + (r.canCancel ? '<button class="cx" data-cx="' + esc(r.id) + '" data-pid="' + esc(p.id) + '" data-when="' + esc(jd(r.date) + ' ' + r.start) + '">キャンセル</button>' : '') + '<div class="d">' + jd(r.date) + ' ' + esc(r.start) + '〜' + (i === 0 && daysTo(r.date) <= 1 ? '<span class="tag">' + (daysTo(r.date) === 0 ? '今日' : '明日') + '</span>' : '') + '</div><div class="m">' + esc(r.menus.join('・')) + '</div></div>').join('')
+      : '<div class="none">次回のご予約はありません</div>';
+    const tks = p.tickets.length ? p.tickets.map(t => {
+      const soon = t.expires && daysTo(t.expires) <= 14;
+      const ex = t.expires ? '有効期限 ' + jd(t.expires) + (soon ? '（あと' + Math.max(0, daysTo(t.expires)) + '日）' : '') : '有効期限なし';
+      if (t.type === 'フリーパス') return '<div class="tk"><div class="n">' + esc(t.name) + '</div><div class="r"><span class="big">ご利用中</span><span class="ex' + (soon ? ' soon' : '') + '">' + ex + '</span></div></div>';
+      const dots = t.total && t.total <= 20 ? '<div class="dots">' + Array.from({ length: t.total }, (_, k) => '<i class="' + (k < t.total - t.remain ? 'used' : '') + '"></i>').join('') + '</div>' : '';
+      return '<div class="tk"><div class="n">' + esc(t.name) + '</div><div class="r"><span class="big">残り ' + t.remain + '<small> 回' + (t.total ? '（全' + t.total + '回）' : '') + '</small></span><span class="ex' + (soon ? ' soon' : '') + '">' + ex + '</span></div>' + dots + '</div>';
+    }).join('') : '<div class="none">ご利用中の回数券・フリーパスはありません</div>';
+    const book = p.book && p.book.ok ? '<button class="btn book" data-book="' + esc(p.id) + '">＋ 次回のご予約をとる</button>' : '<p class="note" style="margin:8px 0 0">' + esc((p.book && p.book.reason) || '次回のご予約は、受付またはお電話でお願いします') + '</p>';
+    return '<div class="card"><div class="who"><b>' + esc(p.name) + ' 様</b><span>' + esc(p.clinic) + '</span></div><h2>次回のご予約</h2>' + next + book + '<h2>回数券・フリーパス</h2>' + tks +
+      '<button class="btn link" data-un="' + esc(p.id) + '">この方の表示をやめる</button></div>';
+  }).join('') +
+    '<button class="btn ghost" id="addBtn">＋ ご家族を追加する</button>' +
+    '<p class="upd">' + (state.patients.some(p => p.next.some(r => r.canCancel)) ? '当日のキャンセル・ご予約の変更は、お電話でご連絡ください' : 'ご予約の変更・キャンセルは、お電話でご連絡ください') + '</p>';
+  document.getElementById('addBtn').onclick = () => renderLink(false);
+  app.querySelectorAll('[data-book]').forEach(b => b.onclick = () => startBook(b.dataset.book));
+  app.querySelectorAll('[data-cx]').forEach(b => b.onclick = async () => {
+    if (!confirm(b.dataset.when + ' のご予約をキャンセルしますか？')) return;
+    b.disabled = true; b.textContent = 'キャンセル中…';
+    try { state = await call('cancel', { patientId: b.dataset.pid, reservationId: b.dataset.cx }); render(); alert('キャンセルしました'); } catch (e) { alert(e.message); b.disabled = false; b.textContent = 'キャンセル'; }
+  });
+  app.querySelectorAll('[data-un]').forEach(b => b.onclick = async () => {
+    if (!confirm('この方の表示をやめますか？（もう一度見るときは、カルテ番号と生年月日を入れなおします）')) return;
+    b.disabled = true;
+    try { state = await call('unlink', { patientId: b.dataset.un }); render(); } catch (e) { alert(e.message); b.disabled = false; }
+  });
+}
+
+// ===== Web予約（メニュー → 日にち → 時間 → 確認） =====
+// 先生の名前は出さない。窓口が「予約できる時間」だけを返す
+let bk = null;
+async function startBook(pid) {
+  const p = state.patients.filter(x => x.id === pid)[0];
+  app.innerHTML = '<div class="center"><div class="spin"></div>読み込み中…</div>';
+  try {
+    const info = await call('book_info', { patientId: pid });
+    if (!info.ok) { alert(info.reason); return render(); }
+    bk = { pid: pid, name: p ? p.name : '', info: info, menuIds: info.prev.slice(), change: !info.prev.length, date: '', times: null, time: '', msg: '', loading: false };
+    renderBook();
+  } catch (e) { alert(e.message); render(); }
+}
+const menuName = id => (bk.info.menus.filter(m => m.id === id)[0] || { name: id }).name;
+const sd = d => { const x = new Date(d + 'T00:00:00'); return { md: (x.getMonth() + 1) + '/' + x.getDate(), w: WD[x.getDay()], cls: x.getDay() === 6 ? ' sat' : x.getDay() === 0 ? ' sun' : '' }; };
+function renderBook() {
+  const I = bk.info;
+  const menus = bk.change
+    ? '<div class="chips">' + I.menus.map(m => '<button class="chip' + (bk.menuIds.indexOf(m.id) >= 0 ? ' on' : '') + '" data-m="' + esc(m.id) + '">' + esc(m.name) + '<small>' + m.min + '分' + (m.prev ? '・前回' : '') + '</small></button>').join('') + '</div>' + (I.prev.length ? '<button class="btn link" id="mBack">前回と同じにもどす</button>' : '')
+    : '<div class="sum" style="margin:0"><b style="font-size:15px">' + esc(bk.menuIds.map(menuName).join('・')) + '</b><div class="note">前回と同じメニュー</div></div><button class="btn link" id="mChg">メニューを追加・変更する</button>';
+  const days = '<div class="days">' + I.dates.map(d => { const x = sd(d); return '<button class="chip' + x.cls + (bk.date === d ? ' on' : '') + '" data-d="' + d + '">' + x.md + '<small>' + x.w + '</small></button>'; }).join('') + '</div>';
+  const times = !bk.date ? '<p class="note">日にちを選ぶと、予約できる時間が出ます</p>'
+    : bk.loading ? '<div class="center" style="padding:14px 0"><div class="spin"></div>空き時間を探しています…</div>'
+    : bk.times && bk.times.length ? '<div class="times">' + bk.times.map(t => '<button class="chip' + (bk.time === t ? ' on' : '') + '" data-t="' + t + '">' + t + '</button>').join('') + '</div>'
+    : '<div class="none">' + esc(bk.msg || 'この日は空きがありません') + '</div>';
+  const ready = bk.menuIds.length && bk.date && bk.time;
+  app.innerHTML = '<div class="card"><div class="who"><b>ご予約</b><span>' + esc(bk.name) + ' 様</span></div>' +
+    '<div class="step"><span>1</span>メニュー</div>' + menus +
+    '<div class="step" style="margin-top:16px"><span>2</span>日にち</div>' + days +
+    '<div class="step" style="margin-top:14px"><span>3</span>時間</div>' + times +
+    (ready ? '<div class="sum"><b>' + jd(bk.date) + ' ' + esc(bk.time) + '〜</b><div>' + esc(bk.menuIds.map(menuName).join('・')) + '</div></div>' : '') +
+    '<div class="msg" id="bMsg"></div><div style="margin-top:12px"><button class="btn" id="bGo"' + (ready ? '' : ' disabled') + '>この内容で予約する</button></div>' +
+    '<button class="btn link" id="bBack">やめる</button>' +
+    '<p class="note">' + (I.cancel === '前日まで' ? 'キャンセルは前日まで、このページからできます。当日はお電話でお願いします。' : 'キャンセル・変更はお電話でお願いします。') + '</p></div>';
+  const $ = id => document.getElementById(id);
+  if ($('mChg')) $('mChg').onclick = () => { bk.change = true; renderBook(); };
+  if ($('mBack')) $('mBack').onclick = () => { bk.change = false; bk.menuIds = I.prev.slice(); resetTimes(); };
+  app.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+    const i = bk.menuIds.indexOf(b.dataset.m);
+    if (i >= 0) bk.menuIds.splice(i, 1); else bk.menuIds.push(b.dataset.m);
+    resetTimes();
+  });
+  app.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { bk.date = b.dataset.d; resetTimes(); });
+  app.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { bk.time = b.dataset.t; renderBook(); setTimeout(() => $('bGo').scrollIntoView({ behavior: 'smooth', block: 'center' }), 50); });
+  $('bBack').onclick = () => { bk = null; render(); };
+  $('bGo').onclick = async () => {
+    const b = $('bGo');
+    b.disabled = true; b.textContent = '予約しています…';
+    try {
+      const r = await call('book', { patientId: bk.pid, date: bk.date, time: bk.time, menuIds: bk.menuIds });
+      state = r.page;
+      app.innerHTML = '<div class="card ok"><div class="ic">✅</div><b>ご予約を受け付けました</b><div class="sum"><b>' + jd(r.booked.date) + ' ' + esc(r.booked.time) + '〜</b><div>' + esc(r.booked.menus.join('・')) + '</div></div><p class="note">ご来院をお待ちしております。</p><button class="btn" id="bDone">マイページにもどる</button></div>';
+      bk = null;
+      document.getElementById('bDone').onclick = render;
+    } catch (e) {
+      $('bMsg').textContent = e.message; b.disabled = false; b.textContent = 'この内容で予約する';
+      if (/埋まり/.test(e.message)) { bk.time = ''; loadTimes(); } // 埋まったときは時間を出しなおす
+    }
+  };
+}
+/** メニューか日にちを変えたら、時間を出しなおす */
+function resetTimes() { bk.time = ''; bk.times = null; if (bk.date && bk.menuIds.length) loadTimes(); else renderBook(); }
+async function loadTimes() {
+  const key = bk.date + '|' + bk.menuIds.join();
+  bk.loading = true; renderBook();
+  try {
+    const r = await call('book_times', { patientId: bk.pid, date: bk.date, menuIds: bk.menuIds });
+    if (!bk || bk.date + '|' + bk.menuIds.join() !== key) return; // 待っている間に選びなおした
+    bk.times = r.times; bk.msg = r.message;
+  } catch (e) { if (bk) { bk.times = []; bk.msg = e.message; } }
+  if (bk) { bk.loading = false; renderBook(); }
+}
+
+/** 初回・家族の追加：院・カルテ番号・生年月日で本人を確かめる */
+function renderLink(first) {
+  app.innerHTML = '<div class="card">' + (first ? '<b>はじめに、ご本人の確認をお願いします</b><p class="note">一度確認すると、次からはこのメニューを開くだけで見られます。</p>' : '<b>ご家族を追加する</b><p class="note">追加する方の情報を入れてください。</p>') +
+    '<label>通っている院</label><select id="fClinic"><option value="">選んでください</option>' + state.clinics.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('') + '</select>' +
+    '<label>カルテ番号（診察券の番号）</label><input id="fKarte" inputmode="numeric" autocomplete="off" placeholder="例：1234">' +
+    '<label>生年月日</label><input id="fBirth" type="date" max="' + ymdLocal(new Date()) + '">' +
+    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">確認する</button></div>' +
+    (first ? '' : '<button class="btn link" id="fBack">戻る</button>') +
+    '<p class="note" style="margin-top:12px">※ 入力した情報は、ご本人の確認だけに使います。わからないときは受付でお声がけください。</p></div>';
+  if (!first) document.getElementById('fBack').onclick = render;
+  document.getElementById('fGo').onclick = async () => {
+    const b = document.getElementById('fGo'), msg = document.getElementById('fMsg');
+    const v = { clinic: document.getElementById('fClinic').value, karte: document.getElementById('fKarte').value.trim(), birth: document.getElementById('fBirth').value };
+    if (!v.clinic || !v.karte || !v.birth) { msg.textContent = '院・カルテ番号・生年月日を入れてください'; return; }
+    b.disabled = true; b.textContent = '確認中…'; msg.textContent = '';
+    try { state = await call('link', v); render(); } catch (e) { msg.textContent = e.message; b.disabled = false; b.textContent = '確認する'; }
+  };
+}
+
+async function start() {
+  try {
+    if (!demo) {
+      if (!LIFF_ID || !API_URL) throw new Error('このページの設定がまだです（LIFF_ID・API_URL）');
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) return liff.login({ redirectUri: location.href });
+    }
+    state = await call('me');
+    render();
+  } catch (e) {
+    app.innerHTML = '<div class="card"><b>開けませんでした</b><p class="note">' + esc(e.message) + '</p><button class="btn" onclick="location.reload()">もう一度読み込む</button></div>';
+  }
+}
+
+// ===== 見本のデータ（?demo=1 のときだけ。見た目の確認用） =====
+let demoLinked = false;
+function demoCall(action, extra) {
+  const clinics = [{ id: '太宰府', name: '太宰府院' }, { id: '六本松', name: '六本松院' }, { id: '二日市', name: '二日市院' }];
+  const add = n => ymdLocal(new Date(Date.now() + n * 86400000));
+  if (action === 'link') demoLinked = true;
+  if (action === 'unlink') demoLinked = false;
+  const wait = v => new Promise(r => setTimeout(() => r(v), 500));
+  if (action === 'book_info') return wait({ ok: true, prev: ['M1', 'M2'], cancel: '前日まで', dates: Array.from({ length: 28 }, (_, i) => add(i + 1)).filter(d => new Date(d + 'T00:00:00').getDay() !== 0),
+    menus: [{ id: 'M1', name: '継続（3割）', min: 15, prev: true }, { id: 'M2', name: 'TBR矯正', min: 15, prev: true }, { id: 'M3', name: '鍼灸', min: 30, prev: false }, { id: 'M4', name: 'ヘッドスパ', min: 30, prev: false }] });
+  if (action === 'book_times') return wait(new Date(extra.date + 'T00:00:00').getDay() === 3 ? { times: [], message: 'この日は空きがありません。ほかの日をお選びください' } : { times: ['9:30', '10:00', '11:30', '15:00', '15:30', '16:00', '18:30', '19:00'], message: '' });
+  if (action === 'book') return demoCall('me').then(pg => ({ booked: { date: extra.date, time: extra.time, menus: extra.menuIds.map(id => ({ M1: '継続（3割）', M2: 'TBR矯正', M3: '鍼灸', M4: 'ヘッドスパ' })[id]) }, page: pg }));
+  if (action === 'cancel') action = 'me';
+  return new Promise(r => setTimeout(() => r({ clinics: clinics, patients: action === 'me' && !demoLinked ? [] : [
+    { id: 'P1', name: '見本 花子', clinic: '六本松院', book: { ok: true, cancel: '前日まで' }, next: [{ id: 'R1', date: add(1), start: '10:00', end: '10:30', menus: ['継続（3割）', 'TBR矯正'], canCancel: true }, { id: 'R2', date: add(8), start: '18:30', end: '19:00', menus: ['継続（3割）'], canCancel: true }],
+      tickets: [{ name: 'TBR矯正5回券', type: '回数券', remain: 3, total: 5, expires: add(10) }, { name: 'マトリックスフリーパス', type: 'フリーパス', remain: null, total: null, expires: add(40) }] },
+  ] }), 500));
+}
+start();
+</script>
+</body>
+</html>
