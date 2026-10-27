@@ -16,6 +16,13 @@
   header { background: var(--main); color: #fff; padding: calc(14px + env(safe-area-inset-top)) 16px 16px; }
   header h1 { margin: 0; font-size: 18px; letter-spacing: .02em; }
   header p { margin: 2px 0 0; font-size: 12.5px; opacity: .85; }
+  header { position: relative; padding-right: 92px; }
+  /* 右上のメニュー（ご家族の追加など、たまにしか使わないもの） */
+  #menuBtn { position: absolute; right: 12px; top: calc(14px + env(safe-area-inset-top)); border: 1.5px solid rgba(255,255,255,.6); background: none; color: #fff; font: inherit; font-size: 13px; font-weight: 700; border-radius: 99px; padding: 4px 12px; cursor: pointer; }
+  #menuBg { position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 10; }
+  #menuBox { position: fixed; right: 12px; top: calc(52px + env(safe-area-inset-top)); width: 240px; background: #fff; border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,.18); z-index: 11; overflow: hidden; }
+  #menuBox button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: #fff; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; padding: 14px 16px; cursor: pointer; }
+  #menuBox button:last-child { border-bottom: 0; }
   main { padding: 14px 16px calc(28px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
   .card { background: #fff; border-radius: 16px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
   .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
@@ -71,7 +78,13 @@
 </style>
 </head>
 <body>
-<header><h1>リカバリー整骨院 マイページ</h1><p>次回のご予約・回数券・フリーパスの確認と、ご予約ができます</p></header>
+<header><h1>リカバリー整骨院 マイページ</h1><p>次回のご予約・回数券・フリーパスの確認と、ご予約ができます</p><button id="menuBtn" hidden>☰ メニュー</button></header>
+<div id="menuBg" hidden></div>
+<div id="menuBox" hidden>
+  <button id="mAdd">＋ ご家族を追加する</button>
+  <button id="mReload">↻ 最新の情報にする</button>
+  <button id="mClose" style="color:var(--sub)">閉じる</button>
+</div>
 <main id="app"><div class="center"><div class="spin"></div>読み込み中…</div></main>
 <script>
 // ===== 設定（LINE Developers・Apps Script の準備ができたら入れる） =====
@@ -96,8 +109,18 @@ async function call(action, extra) {
   return j.data;
 }
 
+/** 右上のメニュー：マイページを表示しているときだけ出す */
+function showMenuBtn(on) { document.getElementById('menuBtn').hidden = !on; openMenu(false); }
+function openMenu(on) { document.getElementById('menuBg').hidden = !on; document.getElementById('menuBox').hidden = !on; }
+document.getElementById('menuBtn').onclick = () => openMenu(true);
+document.getElementById('menuBg').onclick = () => openMenu(false);
+document.getElementById('mClose').onclick = () => openMenu(false);
+document.getElementById('mAdd').onclick = () => { renderLink(false); window.scrollTo(0, 0); };
+document.getElementById('mReload').onclick = () => location.reload();
+
 function render() {
   if (!state.patients.length) return renderLink(true);
+  showMenuBtn(true);
   app.innerHTML = state.patients.map(p => {
     const next = p.next.length ? p.next.map((r, i) => '<div class="resv' + (i === 0 ? ' first' : '') + '">' + (r.canCancel ? '<button class="cx" data-cx="' + esc(r.id) + '" data-pid="' + esc(p.id) + '" data-when="' + esc(jd(r.date) + ' ' + r.start) + '">キャンセル</button>' : '') + '<div class="d">' + jd(r.date) + ' ' + esc(r.start) + '〜' + (i === 0 && daysTo(r.date) <= 1 ? '<span class="tag">' + (daysTo(r.date) === 0 ? '今日' : '明日') + '</span>' : '') + '</div><div class="m">' + esc(r.menus.join('・')) + '</div></div>').join('')
       : '<div class="none">次回のご予約はありません</div>';
@@ -112,9 +135,7 @@ function render() {
     return '<div class="card"><div class="who"><b>' + esc(p.name) + ' 様</b><span>' + esc(p.clinic) + '</span></div><h2>次回のご予約</h2>' + next + book + '<h2>回数券・フリーパス</h2>' + tks +
       '<button class="btn link" data-un="' + esc(p.id) + '">この方の表示をやめる</button></div>';
   }).join('') +
-    '<button class="btn ghost" id="addBtn">＋ ご家族を追加する</button>' +
     '<p class="upd">' + (state.patients.some(p => p.next.some(r => r.canCancel)) ? '当日のキャンセル・ご予約の変更は、お電話でご連絡ください' : 'ご予約の変更・キャンセルは、お電話でご連絡ください') + '</p>';
-  document.getElementById('addBtn').onclick = () => renderLink(false);
   app.querySelectorAll('[data-book]').forEach(b => b.onclick = () => startBook(b.dataset.book));
   app.querySelectorAll('[data-cx]').forEach(b => b.onclick = async () => {
     if (!confirm(b.dataset.when + ' のご予約をキャンセルしますか？')) return;
@@ -144,6 +165,7 @@ async function startBook(pid) {
 const menuName = id => (bk.info.menus.filter(m => m.id === id)[0] || { name: id }).name;
 const sd = d => { const x = new Date(d + 'T00:00:00'); return { md: (x.getMonth() + 1) + '/' + x.getDate(), w: WD[x.getDay()], cls: x.getDay() === 6 ? ' sat' : x.getDay() === 0 ? ' sun' : '' }; };
 function renderBook() {
+  showMenuBtn(false);
   const I = bk.info;
   const menus = bk.change
     ? '<div class="chips">' + I.menus.map(m => '<button class="chip' + (bk.menuIds.indexOf(m.id) >= 0 ? ' on' : '') + '" data-m="' + esc(m.id) + '">' + esc(m.name) + '<small>' + m.min + '分' + (m.prev ? '・前回' : '') + '</small></button>').join('') + '</div>' + (I.prev.length ? '<button class="btn link" id="mBack">前回と同じにもどす</button>' : '')
@@ -203,7 +225,8 @@ async function loadTimes() {
 
 /** 初回・家族の追加：院・カルテ番号・生年月日で本人を確かめる */
 function renderLink(first) {
-  app.innerHTML = '<div class="card">' + (first ? '<b>はじめに、ご本人の確認をお願いします</b><p class="note">一度確認すると、次からはこのメニューを開くだけで見られます。</p>' : '<b>ご家族を追加する</b><p class="note">追加する方の情報を入れてください。</p>') +
+  showMenuBtn(false);
+  app.innerHTML = '<div class="card">' + (first ? '<b>はじめに、ご本人の確認をお願いします</b><p class="note">一度確認すると、次からはこのメニューを開くだけで見られます。</p>' : '<b>ご家族を追加する</b><p class="note">追加する方の情報を入れてください。追加すると、この LINE でその方の予約や回数券も見られます。</p>') +
     '<label>通っている院</label><select id="fClinic"><option value="">選んでください</option>' + state.clinics.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('') + '</select>' +
     '<label>カルテ番号（診察券の番号）</label><input id="fKarte" inputmode="numeric" autocomplete="off" placeholder="例：1234">' +
     '<label>生年月日</label><input id="fBirth" type="date" max="' + ymdLocal(new Date()) + '">' +
