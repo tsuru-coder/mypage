@@ -75,6 +75,17 @@
   .sum { background: var(--weak); border-radius: 12px; padding: 12px; margin: 10px 0; }
   .sum b { font-size: 17px; color: var(--main-d); }
   .ok { text-align: center; padding: 10px 0; } .ok .ic { font-size: 40px; }
+  /* メニュー選び：① 保険／自費 → ② 項目 */
+  .modes { display: grid; gap: 8px; }
+  .mode { text-align: left; border: 1.5px solid var(--line); background: #fff; color: var(--text); font: inherit; border-radius: 12px; padding: 11px 14px; cursor: pointer; }
+  .mode b { display: block; font-size: 15px; } .mode small { display: block; font-size: 12px; color: var(--sub); }
+  .mode.on { border-color: var(--main); background: var(--weak); box-shadow: 0 0 0 2px var(--main) inset; }
+  .opts { display: grid; gap: 6px; margin-top: 10px; }
+  .opt { display: flex; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--line); background: #fff; color: var(--text); font: inherit; border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+  .opt i { flex: 0 0 22px; height: 22px; border-radius: 6px; border: 2px solid var(--line); font-style: normal; color: #fff; text-align: center; line-height: 18px; font-size: 14px; font-weight: 800; }
+  .opt.on { border-color: var(--main); } .opt.on i { background: var(--main); border-color: var(--main); }
+  .opt .t { flex: 1; min-width: 0; } .opt .t b { display: block; font-size: 14.5px; } .opt .t small { display: block; font-size: 12px; color: var(--sub); }
+  .opt .pr { font-size: 13px; font-weight: 700; color: var(--main-d); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -158,38 +169,55 @@ async function startBook(pid) {
   try {
     const info = await call('book_info', { patientId: pid });
     if (!info.ok) { alert(info.reason); return render(); }
-    bk = { pid: pid, name: p ? p.name : '', info: info, menuIds: info.prev.slice(), change: !info.prev.length, date: '', times: null, time: '', msg: '', loading: false };
+    // 前回と同じ（prev）があれば、はじめはそれ。なければ ①保険／自費 から選ぶ
+    bk = { pid: pid, name: p ? p.name : '', info: info, mode: info.prev ? info.prev.mode : '', keys: info.prev ? info.prev.keys.slice() : [], change: !info.prev, date: '', times: null, time: '', msg: '', loading: false };
     renderBook();
   } catch (e) { alert(e.message); render(); }
 }
-const menuName = id => (bk.info.menus.filter(m => m.id === id)[0] || { name: id }).name;
+const itemOf = k => bk.info.items.filter(x => x.key === k)[0] || { key: k, label: k };
+const labels = () => bk.keys.map(k => itemOf(k).label).join('・');
+const yen = n => '¥' + Number(n).toLocaleString();
+const MODES = [['ins', 'いつも保険証を提示している方', '保険診療と、一緒に受ける施術（保険併用）をご案内します'], ['self', '自費で施術を受けている方', '自費のメニューをご案内します']];
 const sd = d => { const x = new Date(d + 'T00:00:00'); return { md: (x.getMonth() + 1) + '/' + x.getDate(), w: WD[x.getDay()], cls: x.getDay() === 6 ? ' sat' : x.getDay() === 0 ? ' sun' : '' }; };
 function renderBook() {
   showMenuBtn(false);
   const I = bk.info;
+  // ① 保険／自費 → ② 項目（自費のメニューだけ料金を出す）
+  const opts = bk.mode ? '<div class="opts">' + I.items.filter(x => x[bk.mode]).map(x => {
+    const on = bk.keys.indexOf(x.key) >= 0, pr = x[bk.mode].price;
+    return '<button class="opt' + (on ? ' on' : '') + '" data-k="' + esc(x.key) + '"><i>' + (on ? '✓' : '') + '</i><span class="t"><b>' + esc(x.label) + '</b>' + (x.note ? '<small>' + esc(x.note) + '</small>' : '') + '</span>' + (pr != null ? '<span class="pr">' + yen(pr) + '</span>' : '') + '</button>';
+  }).join('') + '</div>' + (bk.mode === 'ins' ? '<p class="note" style="margin:8px 0 0">※ 保険の料金は、負担割合や通院の回数によって変わります。自費の料金は保険の分とは別です。</p>' : '') : '';
   const menus = bk.change
-    ? '<div class="chips">' + I.menus.map(m => '<button class="chip' + (bk.menuIds.indexOf(m.id) >= 0 ? ' on' : '') + '" data-m="' + esc(m.id) + '">' + esc(m.name) + '<small>' + m.min + '分' + (m.prev ? '・前回' : '') + '</small></button>').join('') + '</div>' + (I.prev.length ? '<button class="btn link" id="mBack">前回と同じにもどす</button>' : '')
-    : '<div class="sum" style="margin:0"><b style="font-size:15px">' + esc(bk.menuIds.map(menuName).join('・')) + '</b><div class="note">前回と同じメニュー</div></div><button class="btn link" id="mChg">メニューを追加・変更する</button>';
+    ? '<div class="modes">' + MODES.map(m => '<button class="mode' + (bk.mode === m[0] ? ' on' : '') + '" data-mode="' + m[0] + '"><b>' + m[1] + '</b><small>' + m[2] + '</small></button>').join('') + '</div>' + opts + (I.prev ? '<button class="btn link" id="mBack">前回と同じにもどす</button>' : '')
+    : '<div class="sum" style="margin:0"><b style="font-size:15px">' + esc(labels()) + '</b><div class="note">前回と同じメニュー</div></div><button class="btn link" id="mChg">メニューを変更する</button>';
   const days = '<div class="days">' + I.dates.map(d => { const x = sd(d); return '<button class="chip' + x.cls + (bk.date === d ? ' on' : '') + '" data-d="' + d + '">' + x.md + '<small>' + x.w + '</small></button>'; }).join('') + '</div>';
   const times = !bk.date ? '<p class="note">日にちを選ぶと、予約できる時間が出ます</p>'
     : bk.loading ? '<div class="center" style="padding:14px 0"><div class="spin"></div>空き時間を探しています…</div>'
     : bk.times && bk.times.length ? '<div class="times">' + bk.times.map(t => '<button class="chip' + (bk.time === t ? ' on' : '') + '" data-t="' + t + '">' + t + '</button>').join('') + '</div>'
     : '<div class="none">' + esc(bk.msg || 'この日は空きがありません') + '</div>';
-  const ready = bk.menuIds.length && bk.date && bk.time;
+  const ready = bk.keys.length && bk.date && bk.time;
   app.innerHTML = '<div class="card"><div class="who"><b>ご予約</b><span>' + esc(bk.name) + ' 様</span></div>' +
     '<div class="step"><span>1</span>メニュー</div>' + menus +
     '<div class="step" style="margin-top:16px"><span>2</span>日にち</div>' + days +
     '<div class="step" style="margin-top:14px"><span>3</span>時間</div>' + times +
-    (ready ? '<div class="sum"><b>' + jd(bk.date) + ' ' + esc(bk.time) + '〜</b><div>' + esc(bk.menuIds.map(menuName).join('・')) + '</div></div>' : '') +
+    (ready ? '<div class="sum"><b>' + jd(bk.date) + ' ' + esc(bk.time) + '〜</b><div>' + esc(labels()) + '</div></div>' : '') +
     '<div class="msg" id="bMsg"></div><div style="margin-top:12px"><button class="btn" id="bGo"' + (ready ? '' : ' disabled') + '>この内容で予約する</button></div>' +
     '<button class="btn link" id="bBack">やめる</button>' +
     '<p class="note">' + (I.cancel === '前日まで' ? 'キャンセルは前日まで、このページからできます。当日はお電話でお願いします。' : 'キャンセル・変更はお電話でお願いします。') + '</p></div>';
   const $ = id => document.getElementById(id);
   if ($('mChg')) $('mChg').onclick = () => { bk.change = true; renderBook(); };
-  if ($('mBack')) $('mBack').onclick = () => { bk.change = false; bk.menuIds = I.prev.slice(); resetTimes(); };
-  app.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
-    const i = bk.menuIds.indexOf(b.dataset.m);
-    if (i >= 0) bk.menuIds.splice(i, 1); else bk.menuIds.push(b.dataset.m);
+  if ($('mBack')) $('mBack').onclick = () => { bk.change = false; bk.mode = I.prev.mode; bk.keys = I.prev.keys.slice(); resetTimes(); };
+  // 保険／自費を選んだら、選べない項目は外す。保険なら「保険診療」をはじめから選んでおく
+  app.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => {
+    if (bk.mode === b.dataset.mode) return;
+    bk.mode = b.dataset.mode;
+    bk.keys = bk.keys.filter(k => itemOf(k)[bk.mode]);
+    if (bk.mode === 'ins' && bk.keys.indexOf('INS') < 0 && I.items.some(x => x.key === 'INS')) bk.keys.unshift('INS');
+    resetTimes();
+  });
+  app.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+    const i = bk.keys.indexOf(b.dataset.k);
+    if (i >= 0) bk.keys.splice(i, 1); else bk.keys.push(b.dataset.k);
     resetTimes();
   });
   app.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { bk.date = b.dataset.d; resetTimes(); });
@@ -199,7 +227,7 @@ function renderBook() {
     const b = $('bGo');
     b.disabled = true; b.textContent = '予約しています…';
     try {
-      const r = await call('book', { patientId: bk.pid, date: bk.date, time: bk.time, menuIds: bk.menuIds });
+      const r = await call('book', { patientId: bk.pid, date: bk.date, time: bk.time, choice: { mode: bk.mode, keys: bk.keys } });
       state = r.page;
       app.innerHTML = '<div class="card ok"><div class="ic">✅</div><b>ご予約を受け付けました</b><div class="sum"><b>' + jd(r.booked.date) + ' ' + esc(r.booked.time) + '〜</b><div>' + esc(r.booked.menus.join('・')) + '</div></div><p class="note">ご来院をお待ちしております。</p><button class="btn" id="bDone">マイページにもどる</button></div>';
       bk = null;
@@ -211,13 +239,13 @@ function renderBook() {
   };
 }
 /** メニューか日にちを変えたら、時間を出しなおす */
-function resetTimes() { bk.time = ''; bk.times = null; if (bk.date && bk.menuIds.length) loadTimes(); else renderBook(); }
+function resetTimes() { bk.time = ''; bk.times = null; if (bk.date && bk.keys.length) loadTimes(); else renderBook(); }
 async function loadTimes() {
-  const key = bk.date + '|' + bk.menuIds.join();
+  const key = bk.date + '|' + bk.mode + '|' + bk.keys.join();
   bk.loading = true; renderBook();
   try {
-    const r = await call('book_times', { patientId: bk.pid, date: bk.date, menuIds: bk.menuIds });
-    if (!bk || bk.date + '|' + bk.menuIds.join() !== key) return; // 待っている間に選びなおした
+    const r = await call('book_times', { patientId: bk.pid, date: bk.date, choice: { mode: bk.mode, keys: bk.keys } });
+    if (!bk || bk.date + '|' + bk.mode + '|' + bk.keys.join() !== key) return; // 待っている間に選びなおした
     bk.times = r.times; bk.msg = r.message;
   } catch (e) { if (bk) { bk.times = []; bk.msg = e.message; } }
   if (bk) { bk.loading = false; renderBook(); }
@@ -265,10 +293,14 @@ function demoCall(action, extra) {
   if (action === 'link') demoLinked = true;
   if (action === 'unlink') demoLinked = false;
   const wait = v => new Promise(r => setTimeout(() => r(v), 500));
-  if (action === 'book_info') return wait({ ok: true, prev: ['M1', 'M2'], cancel: '前日まで', dates: Array.from({ length: 28 }, (_, i) => add(i + 1)).filter(d => new Date(d + 'T00:00:00').getDay() !== 0),
-    menus: [{ id: 'M1', name: '継続（3割）', min: 15, prev: true }, { id: 'M2', name: 'TBR矯正', min: 15, prev: true }, { id: 'M3', name: '鍼灸', min: 30, prev: false }, { id: 'M4', name: 'ヘッドスパ', min: 30, prev: false }] });
+  if (action === 'book_info') return wait({ ok: true, prev: { mode: 'ins', keys: ['INS', 'G:TBR矯正'] }, cancel: '前日まで', dates: Array.from({ length: 28 }, (_, i) => add(i + 1)).filter(d => new Date(d + 'T00:00:00').getDay() !== 0),
+    items: [{ key: 'INS', label: '保険診療（基本施術）', note: '料金は、保険の負担割合や通院の回数によって変わります', ins: { price: null }, self: null },
+      { key: 'G:TBR矯正', label: 'TBR矯正', note: '', ins: { price: 1650 }, self: { price: 3630 } }, { key: 'G:筋膜調整', label: '筋膜調整', note: '', ins: { price: 1650 }, self: { price: 3300 } },
+      { key: 'HARI', label: '保険鍼灸', note: '医師の同意書が必要です', ins: { price: null }, self: null }, { key: 'M:M20', label: '鍼灸治療1部位', note: '', ins: { price: 1820 }, self: { price: 1820 } },
+      { key: 'M:M21', label: '福岡市鍼', note: '福岡市の鍼灸助成です（受領証が必要です）', ins: { price: null }, self: { price: null } }, { key: 'M:M30', label: 'マトリックス', note: '', ins: { price: 1100 }, self: { price: 1100 } },
+      { key: 'G:ヘッドスパ', label: 'ヘッドスパ', note: '', ins: { price: 4400 }, self: { price: 4400 } }] });
   if (action === 'book_times') return wait(new Date(extra.date + 'T00:00:00').getDay() === 3 ? { times: [], message: 'この日は空きがありません。ほかの日をお選びください' } : { times: ['9:30', '10:00', '11:30', '15:00', '15:30', '16:00', '18:30', '19:00'], message: '' });
-  if (action === 'book') return demoCall('me').then(pg => ({ booked: { date: extra.date, time: extra.time, menus: extra.menuIds.map(id => ({ M1: '継続（3割）', M2: 'TBR矯正', M3: '鍼灸', M4: 'ヘッドスパ' })[id]) }, page: pg }));
+  if (action === 'book') return demoCall('me').then(pg => ({ booked: { date: extra.date, time: extra.time, menus: extra.choice.keys.map(k => k === 'INS' ? '保険診療（基本施術）' : k === 'HARI' ? '保険鍼灸' : k.replace(/^G:|^M:/, '')) }, page: pg }));
   if (action === 'cancel') action = 'me';
   return new Promise(r => setTimeout(() => r({ clinics: clinics, patients: action === 'me' && !demoLinked ? [] : [
     { id: 'P1', name: '見本 花子', clinic: '六本松院', book: { ok: true, cancel: '前日まで' }, next: [{ id: 'R1', date: add(1), start: '10:00', end: '10:30', menus: ['継続（3割）', 'TBR矯正'], canCancel: true }, { id: 'R2', date: add(8), start: '18:30', end: '19:00', menus: ['継続（3割）'], canCancel: true }],
