@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>マイページ｜リカバリー整骨院</title>
-<!-- 患者マイページ（LINE のリッチメニューから開く）
-     ・LINE の中で開き（LIFF）、LINE が確かめた本人の証明を窓口（Apps Script）に送って、その人の分だけを表示する
-     ・このページ自体には患者さんのデータは入っていない
+<!-- 患者マイページ（LINE のリッチメニュー・登録用QR・受付QRから開く）
+     ・ログインはメールアドレス＋パスワード。ログインした端末には「端末キー」を覚えておき、次からは入力なしで開ける
+     ・はじめては、受付で渡す登録用QR（?reg=…）から登録する。受付に置いた受付QR（?in=…）を読むと、今日の予約が「来院済」になる
+     ・このページ自体には患者さんのデータは入っていない（端末に残るのは端末キーだけ）
      ・設定：下の LIFF_ID と API_URL を入れる。?demo=1 を付けると、見本のデータで見た目だけ確かめられる -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js" charset="utf-8"></script>
 <style>
@@ -86,6 +87,12 @@
   .opt.on { border-color: var(--main); } .opt.on i { background: var(--main); border-color: var(--main); }
   .opt .t { flex: 1; min-width: 0; } .opt .t b { display: block; font-size: 14.5px; } .opt .t small { display: block; font-size: 12px; color: var(--sub); }
   .opt .pr { font-size: 13px; font-weight: 700; color: var(--main-d); white-space: nowrap; }
+  /* ログイン・登録・受付 */
+  .lnk { display: block; text-align: center; margin-top: 10px; color: var(--main-d); font-weight: 700; font-size: 13.5px; background: none; border: 0; width: 100%; cursor: pointer; font-family: inherit; }
+  .ci { border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .ci .d { font-size: 17px; font-weight: 800; } .ci .m { font-size: 13px; color: var(--sub); }
+  .ci.done { border-color: var(--main); background: var(--weak); }
+  .tk .big.wait { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -94,6 +101,7 @@
 <div id="menuBox" hidden>
   <button id="mAdd">＋ ご家族を追加する</button>
   <button id="mReload">↻ 最新の情報にする</button>
+  <button id="mLogout">ログアウト</button>
   <button id="mClose" style="color:var(--sub)">閉じる</button>
 </div>
 <main id="app"><div class="center"><div class="spin"></div>読み込み中…</div></main>
@@ -109,15 +117,30 @@ const jd = d => { const x = new Date(d + 'T00:00:00'); return (x.getMonth() + 1)
 const ymdLocal = x => x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); // 日本時間の日付
 const daysTo = d => Math.round((new Date(d + 'T00:00:00') - new Date(new Date().toDateString())) / 86400000);
 const demo = new URLSearchParams(location.search).get('demo') === '1';
-let state = { clinics: [], patients: [] };
+let state = { patients: [] };
+let pend = null; // QRから開いたとき：{ reg: 登録用QRの番号 } か { in: 受付QRの番号 }
 
-/** 窓口を呼ぶ（LINE の証明をつけて） */
+// 端末キー：この端末でログインしたしるし（パスワードは覚えない）。保存できない端末では、開いている間だけ覚える
+const TOKEN_KEY = demo ? 'mp_token_demo' : 'mp_token';
+let memToken = '';
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || memToken; } catch (e) { return memToken; } };
+const setToken = t => { memToken = t || ''; try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) { /* 保存できない端末 */ } };
+
+/** 窓口を呼ぶ（端末キーをつけて）。ログインが必要なときは e.login = true */
 async function call(action, extra) {
   if (demo) return demoCall(action, extra);
-  const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action: action, idToken: liff.getIDToken() }, extra || {})) });
+  const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action: action, token: getToken() }, extra || {})) });
   const j = await res.json();
-  if (!j.ok) throw new Error(j.error || 'うまく読み込めませんでした');
+  if (!j.ok) { const e = new Error(j.error || 'うまく読み込めませんでした'); e.login = !!j.login; throw e; }
   return j.data;
+}
+const loading = t => { app.innerHTML = '<div class="center"><div class="spin"></div>' + esc(t || '読み込み中…') + '</div>'; };
+const $ = id => document.getElementById(id);
+/** ボタンを押したら：止めて「…中」にし、終わったら戻す。エラーは msg に出す */
+async function busy(btn, label, fn) {
+  const t = btn.textContent, msg = $('fMsg');
+  btn.disabled = true; btn.textContent = label; if (msg) msg.textContent = '';
+  try { await fn(); } catch (e) { if (msg) msg.textContent = e.message; else alert(e.message); if (document.body.contains(btn)) { btn.disabled = false; btn.textContent = t; } }
 }
 
 /** 右上のメニュー：マイページを表示しているときだけ出す */
@@ -126,11 +149,17 @@ function openMenu(on) { document.getElementById('menuBg').hidden = !on; document
 document.getElementById('menuBtn').onclick = () => openMenu(true);
 document.getElementById('menuBg').onclick = () => openMenu(false);
 document.getElementById('mClose').onclick = () => openMenu(false);
-document.getElementById('mAdd').onclick = () => { renderLink(false); window.scrollTo(0, 0); };
+document.getElementById('mAdd').onclick = () => { openMenu(false); alert('ご家族の追加は、受付でお渡しする「マイページ登録用QRコード」を、この端末で読み取ってください。\n（ログインしたまま読み取ると、このマイページに追加されます）'); };
 document.getElementById('mReload').onclick = () => location.reload();
+document.getElementById('mLogout').onclick = async () => {
+  openMenu(false);
+  if (!confirm('この端末からログアウトしますか？\n（次に開くときは、メールアドレスとパスワードを入れます）')) return;
+  try { await call('logout'); } catch (e) { /* すでに切れていてもよい */ }
+  setToken(''); state = { patients: [] }; renderLogin();
+};
 
 function render() {
-  if (!state.patients.length) return renderLink(true);
+  if (!state.patients.length) return renderEmpty();
   showMenuBtn(true);
   app.innerHTML = state.patients.map(p => {
     const next = p.next.length ? p.next.map((r, i) => '<div class="resv' + (i === 0 ? ' first' : '') + '">' + (r.canCancel ? '<button class="cx" data-cx="' + esc(r.id) + '" data-pid="' + esc(p.id) + '" data-when="' + esc(jd(r.date) + ' ' + r.start) + '">キャンセル</button>' : '') + '<div class="d">' + jd(r.date) + ' ' + esc(r.start) + '〜' + (i === 0 && daysTo(r.date) <= 1 ? '<span class="tag">' + (daysTo(r.date) === 0 ? '今日' : '明日') + '</span>' : '') + '</div><div class="m">' + esc(r.menus.join('・')) + '</div></div>').join('')
@@ -138,7 +167,8 @@ function render() {
     const tks = p.tickets.length ? p.tickets.map(t => {
       const soon = t.expires && daysTo(t.expires) <= 14;
       const ex = t.expires ? '有効期限 ' + jd(t.expires) + (soon ? '（あと' + Math.max(0, daysTo(t.expires)) + '日）' : '') : '有効期限なし';
-      if (t.type === 'フリーパス') return '<div class="tk"><div class="n">' + esc(t.name) + '</div><div class="r"><span class="big">ご利用中</span><span class="ex' + (soon ? ' soon' : '') + '">' + ex + '</span></div></div>';
+      const wait = t.starts && t.starts > ymdLocal(new Date()); // 期間が決まったパスで、まだ始まっていない
+      if (t.type === 'フリーパス') return '<div class="tk"><div class="n">' + esc(t.name) + '</div><div class="r"><span class="big' + (wait ? ' wait' : '') + '">' + (wait ? '開始前' : 'ご利用中') + '</span><span class="ex">' + (wait ? jd(t.starts) + 'から使えます' : '') + '</span><span class="ex' + (soon ? ' soon' : '') + '">' + ex + '</span></div></div>';
       const dots = t.total && t.total <= 20 ? '<div class="dots">' + Array.from({ length: t.total }, (_, k) => '<i class="' + (k < t.total - t.remain ? 'used' : '') + '"></i>').join('') + '</div>' : '';
       return '<div class="tk"><div class="n">' + esc(t.name) + '</div><div class="r"><span class="big">残り ' + t.remain + '<small> 回' + (t.total ? '（全' + t.total + '回）' : '') + '</small></span><span class="ex' + (soon ? ' soon' : '') + '">' + ex + '</span></div>' + dots + '</div>';
     }).join('') : '<div class="none">ご利用中の回数券・フリーパスはありません</div>';
@@ -154,7 +184,7 @@ function render() {
     try { state = await call('cancel', { patientId: b.dataset.pid, reservationId: b.dataset.cx }); render(); alert('キャンセルしました'); } catch (e) { alert(e.message); b.disabled = false; b.textContent = 'キャンセル'; }
   });
   app.querySelectorAll('[data-un]').forEach(b => b.onclick = async () => {
-    if (!confirm('この方の表示をやめますか？（もう一度見るときは、カルテ番号と生年月日を入れなおします）')) return;
+    if (!confirm('この方の表示をやめますか？（もう一度見るときは、受付で新しい登録用QRコードをお受け取りください）')) return;
     b.disabled = true;
     try { state = await call('unlink', { patientId: b.dataset.un }); render(); } catch (e) { alert(e.message); b.disabled = false; }
   });
@@ -251,48 +281,181 @@ async function loadTimes() {
   if (bk) { bk.loading = false; renderBook(); }
 }
 
-/** 初回・家族の追加：院・カルテ番号・生年月日で本人を確かめる */
-function renderLink(first) {
-  showMenuBtn(false);
-  app.innerHTML = '<div class="card">' + (first ? '<b>はじめに、ご本人の確認をお願いします</b><p class="note">一度確認すると、次からはこのメニューを開くだけで見られます。</p>' : '<b>ご家族を追加する</b><p class="note">追加する方の情報を入れてください。追加すると、この LINE でその方の予約や回数券も見られます。</p>') +
-    '<label>通っている院</label><select id="fClinic"><option value="">選んでください</option>' + state.clinics.map(c => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('') + '</select>' +
-    '<label>カルテ番号（診察券の番号）</label><input id="fKarte" inputmode="numeric" autocomplete="off" placeholder="例：1234">' +
-    '<label>生年月日</label><input id="fBirth" type="date" max="' + ymdLocal(new Date()) + '">' +
-    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">確認する</button></div>' +
-    (first ? '' : '<button class="btn link" id="fBack">戻る</button>') +
-    '<p class="note" style="margin-top:12px">※ 入力した情報は、ご本人の確認だけに使います。わからないときは受付でお声がけください。</p></div>';
-  if (!first) document.getElementById('fBack').onclick = render;
-  document.getElementById('fGo').onclick = async () => {
-    const b = document.getElementById('fGo'), msg = document.getElementById('fMsg');
-    const v = { clinic: document.getElementById('fClinic').value, karte: document.getElementById('fKarte').value.trim(), birth: document.getElementById('fBirth').value };
-    if (!v.clinic || !v.karte || !v.birth) { msg.textContent = '院・カルテ番号・生年月日を入れてください'; return; }
-    b.disabled = true; b.textContent = '確認中…'; msg.textContent = '';
-    try { state = await call('link', v); render(); } catch (e) { msg.textContent = e.message; b.disabled = false; b.textContent = '確認する'; }
-  };
+/** ログインしているのに、つながった方がいない */
+function renderEmpty() {
+  showMenuBtn(true);
+  app.innerHTML = '<div class="card"><b>表示する方がいません</b><p class="note">受付でお渡しする「マイページ登録用QRコード」を、この端末で読み取ってください。読み取ると、その方の予約や回数券が見られます。</p></div>';
 }
 
-async function start() {
+// ===== ログイン =====
+function renderLogin(note) {
+  showMenuBtn(false);
+  app.innerHTML = '<div class="card"><b>ログイン</b>' + (pend && pend.reg ? '<p class="note">ログインすると、QRコードの方をこのマイページに追加します。</p>' : pend && pend.in ? '<p class="note">ログインすると、来院の受付をします。</p>' : '') +
+    (note ? '<p class="note" style="color:var(--warn);font-weight:700">' + esc(note) + '</p>' : '') +
+    '<label>メールアドレス</label><input id="fMail" type="email" autocomplete="username" inputmode="email">' +
+    '<label>パスワード</label><input id="fPw" type="password" autocomplete="current-password">' +
+    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">ログイン</button></div>' +
+    '<button class="lnk" id="fForgot">パスワードを忘れた方</button>' +
+    (pend && pend.reg ? '<button class="lnk" id="fReg">はじめて登録する方はこちら</button>' : '<p class="note" style="margin-top:14px">※ はじめての方は、受付でお渡しする「マイページ登録用QRコード」を読み取って登録してください。<br>※ 一度ログインすると、この端末では次から入力なしで開けます。</p>') + '</div>';
+  $('fForgot').onclick = renderReset;
+  if ($('fReg')) $('fReg').onclick = regEntry;
+  $('fGo').onclick = () => busy($('fGo'), 'ログイン中…', async () => {
+    const r = await call('login', { email: $('fMail').value, password: $('fPw').value });
+    setToken(r.token); state = r.page; afterLogin();
+  });
+}
+/** ログインできたら：QRから来ていれば、その続き */
+function afterLogin() {
+  if (pend && pend.reg) return addByQr();
+  if (pend && pend.in) return checkin();
+  render();
+}
+
+// ===== 登録（登録用QRから） =====
+async function regEntry() {
+  showMenuBtn(false); loading();
+  let info;
+  try { info = await call('reg_info', { code: pend.reg }); } catch (e) {
+    pend = null;
+    app.innerHTML = '<div class="card"><b>このQRコードは使えません</b><p class="note">' + esc(e.message) + '</p><button class="btn" id="fLogin">ログイン画面へ</button></div>';
+    $('fLogin').onclick = () => (getToken() ? start() : renderLogin());
+    return;
+  }
+  app.innerHTML = '<div class="card"><b>' + esc(info.clinic) + ' マイページの登録</b><p class="note">ログインに使うメールアドレスとパスワードを決めてください。</p>' +
+    '<label>メールアドレス</label><input id="fMail" type="email" autocomplete="username" inputmode="email">' +
+    '<label>パスワード（8文字以上）</label><input id="fPw" type="password" autocomplete="new-password">' +
+    '<label>パスワード（確認のため、もう一度）</label><input id="fPw2" type="password" autocomplete="new-password">' +
+    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">確認コードを送る</button></div>' +
+    '<button class="lnk" id="fHave">すでに登録済みの方（ご家族を追加する方）はこちら</button>' +
+    '<p class="note" style="margin-top:12px">※ 入れたメールアドレスに、6けたの確認コードが届きます。seikotsuin@recovery-fuk.co.jp からのメールを受け取れるようにしておいてください。</p></div>';
+  $('fHave').onclick = () => renderLogin();
+  $('fGo').onclick = () => busy($('fGo'), '送っています…', async () => {
+    if ($('fPw').value !== $('fPw2').value) throw new Error('パスワードが2回とも同じになっていません');
+    const email = $('fMail').value;
+    const r = await call('reg_start', { code: pend.reg, email: email, password: $('fPw').value });
+    renderMailCode(email, '登録する', async code => {
+      const x = await call('reg_finish', { pending: r.pending, mailCode: code });
+      setToken(x.token); state = x.page; pend = null; render(); alert('登録しました。次からは、この端末で開くだけで見られます。');
+    });
+  });
+}
+/** 確認コード（6けた）を入れる画面 */
+function renderMailCode(email, label, done) {
+  app.innerHTML = '<div class="card"><b>確認コードを入れてください</b><p class="note">' + esc(email) + ' に6けたの確認コードを送りました（15分有効）。</p>' +
+    '<label>確認コード</label><input id="fCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">' +
+    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">' + esc(label) + '</button></div>' +
+    '<p class="note" style="margin-top:12px">※ 届かないときは、迷惑メールのフォルダもご確認ください。それでも届かないときは、はじめからやり直すか、受付でお声がけください。</p></div>';
+  $('fGo').onclick = () => busy($('fGo'), '確認中…', () => done($('fCode').value.trim()));
+}
+/** ログインしたまま登録用QRを読んだ：ご家族として追加 */
+async function addByQr() {
+  showMenuBtn(false); loading();
+  let info;
+  try { info = await call('reg_info', { code: pend.reg }); } catch (e) { pend = null; alert(e.message); return render(); }
+  app.innerHTML = '<div class="card"><b>マイページに追加しますか？</b><p class="note">読み取ったQRコードの方（' + esc(info.clinic) + '）を、このマイページに追加します。追加すると、この端末でその方の予約や回数券も見られます。</p>' +
+    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">追加する</button></div><button class="btn link" id="fBack">やめる</button></div>';
+  $('fBack').onclick = () => { pend = null; render(); };
+  $('fGo').onclick = () => busy($('fGo'), '追加中…', async () => { state = await call('add', { code: pend.reg }); pend = null; render(); });
+}
+
+// ===== パスワードの再設定 =====
+function renderReset() {
+  app.innerHTML = '<div class="card"><b>パスワードの再設定</b><p class="note">登録したメールアドレスに、確認コードを送ります。</p>' +
+    '<label>メールアドレス</label><input id="fMail" type="email" autocomplete="username" inputmode="email">' +
+    '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">確認コードを送る</button></div><button class="btn link" id="fBack">戻る</button></div>';
+  $('fBack').onclick = () => renderLogin();
+  $('fGo').onclick = () => busy($('fGo'), '送っています…', async () => {
+    const email = $('fMail').value;
+    const r = await call('reset_start', { email: email });
+    app.innerHTML = '<div class="card"><b>新しいパスワードを決めてください</b><p class="note">ご登録があれば、' + esc(email) + ' に6けたの確認コードを送りました（15分有効）。</p>' +
+      '<label>確認コード</label><input id="fCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6">' +
+      '<label>新しいパスワード（8文字以上）</label><input id="fPw" type="password" autocomplete="new-password">' +
+      '<label>新しいパスワード（もう一度）</label><input id="fPw2" type="password" autocomplete="new-password">' +
+      '<div class="msg" id="fMsg"></div><div style="margin-top:14px"><button class="btn" id="fGo">再設定する</button></div>' +
+      '<p class="note" style="margin-top:12px">※ 再設定すると、ほかの端末ではもう一度ログインが必要になります。</p></div>';
+    $('fGo').onclick = () => busy($('fGo'), '確認中…', async () => {
+      if ($('fPw').value !== $('fPw2').value) throw new Error('パスワードが2回とも同じになっていません');
+      const x = await call('reset_finish', { pending: r.pending, mailCode: $('fCode').value.trim(), password: $('fPw').value });
+      setToken(x.token); state = x.page; alert('パスワードを再設定しました'); afterLogin();
+    });
+  });
+}
+
+// ===== 受付QR（来院の受付） =====
+async function checkin() {
+  showMenuBtn(false); loading('受付しています…');
   try {
-    if (!demo) {
-      if (!LIFF_ID || !API_URL) throw new Error('このページの設定がまだです（LIFF_ID・API_URL）');
-      await liff.init({ liffId: LIFF_ID });
-      if (!liff.isLoggedIn()) return liff.login({ redirectUri: location.href });
-    }
-    state = await call('me');
-    render();
+    let r = await call('checkin_info', { code: pend.in });
+    // 今「来院済」にできる予約が1つだけなら、そのまま受付する
+    const ok = r.list.filter(x => x.status === 'ok');
+    if (ok.length === 1 && r.list.length === 1) r = await call('checkin', { code: pend.in, reservationId: ok[0].rid });
+    renderCheckin(r);
   } catch (e) {
+    if (e.login) { setToken(''); return renderLogin(e.message); }
+    pend = null;
+    app.innerHTML = '<div class="card"><b>受付できませんでした</b><p class="note">' + esc(e.message) + '</p><button class="btn" id="fBack">マイページへ</button></div>';
+    $('fBack').onclick = () => start();
+  }
+}
+function renderCheckin(r) {
+  const st = x => x.status === 'done' ? '<b style="color:var(--main-d)">✅ 受付しました' + (x.at ? '（' + esc(x.at) + '）' : '') + '</b>'
+    : x.status === 'ok' ? '<button class="btn" data-ci="' + esc(x.rid) + '">来院しました</button>'
+    : x.status === 'early' ? '<span class="note">受付は、ご予約の' + r.early + '分前からできます</span>'
+    : '<span class="note" style="color:var(--warn)">ご予約の時間を過ぎています。受付でお声がけください</span>';
+  app.innerHTML = '<div class="card"><div class="who"><b>ご来院の受付</b><span>' + esc(r.clinic) + '</span></div>' +
+    (r.list.length ? r.list.map(x => '<div class="ci' + (x.status === 'done' ? ' done' : '') + '"><div class="d">' + esc(x.name) + ' 様　' + esc(x.start) + '〜</div><div class="m">' + esc(x.menus.join('・')) + '</div><div style="margin-top:8px">' + st(x) + '</div></div>').join('')
+      : '<div class="none">本日、' + esc(r.clinic) + 'でのご予約が見つかりません。受付でお声がけください。</div>') +
+    (r.list.some(x => x.status === 'done') ? '<p class="note">そのままお掛けになってお待ちください。</p>' : '') +
+    '<div class="msg" id="fMsg"></div><button class="btn ghost" id="fBack" style="margin-top:8px">マイページへ</button></div>';
+  $('fBack').onclick = () => { pend = null; start(); };
+  app.querySelectorAll('[data-ci]').forEach(b => b.onclick = () => busy(b, '受付中…', async () => renderCheckin(await call('checkin', { code: pend.in, reservationId: b.dataset.ci }))));
+}
+
+/** QRから開いたとき：URLの ?reg= / ?in= を読み、URLからは消す（読み込みなおしで同じことが起きないように） */
+function readParams() {
+  const q = new URLSearchParams(location.search);
+  const st = q.get('liff.state'); // LINE の中で開いたとき、まだ移しかえられていない場合
+  const p = st ? new URLSearchParams(st.replace(/^[^?]*\?/, '')) : q;
+  const reg = p.get('reg') || q.get('reg'), inn = p.get('in') || q.get('in');
+  if (reg) pend = { reg: reg }; else if (inn) pend = { in: inn };
+  if (reg || inn) try { history.replaceState(null, '', location.pathname + (demo ? '?demo=1' : '')); } catch (e) { /* そのままでよい */ }
+}
+
+let inited = false;
+async function start() {
+  loading();
+  try {
+    if (!demo && !inited) {
+      if (!LIFF_ID || !API_URL) throw new Error('このページの設定がまだです（LIFF_ID・API_URL）');
+      try { await liff.init({ liffId: LIFF_ID }); } catch (e) { /* LINE の外で開いたときも、そのまま使えるように */ }
+    }
+    if (!inited) { readParams(); inited = true; }
+    if (!getToken()) return pend && pend.reg ? regEntry() : renderLogin();
+    if (pend && pend.in) return checkin();
+    state = await call('me');
+    afterLogin();
+  } catch (e) {
+    if (e.login) { setToken(''); return pend && pend.reg ? regEntry() : renderLogin(e.message === 'ログインしてください' ? '' : e.message); }
     app.innerHTML = '<div class="card"><b>開けませんでした</b><p class="note">' + esc(e.message) + '</p><button class="btn" onclick="location.reload()">もう一度読み込む</button></div>';
   }
 }
 
-// ===== 見本のデータ（?demo=1 のときだけ。見た目の確認用） =====
-let demoLinked = false;
+// ===== 見本のデータ（?demo=1 のときだけ。見た目の確認用。?demo=1&reg=x で登録、&in=x で受付の画面） =====
+let demoArrived = '';
 function demoCall(action, extra) {
-  const clinics = [{ id: '太宰府', name: '太宰府院' }, { id: '六本松', name: '六本松院' }, { id: '二日市', name: '二日市院' }];
   const add = n => ymdLocal(new Date(Date.now() + n * 86400000));
-  if (action === 'link') demoLinked = true;
-  if (action === 'unlink') demoLinked = false;
   const wait = v => new Promise(r => setTimeout(() => r(v), 500));
+  const fail = (m, login) => new Promise((_, ng) => setTimeout(() => { const e = new Error(m); e.login = !!login; ng(e); }, 400));
+  const page = () => ({ patients: [
+    { id: 'P1', name: '見本 花子', clinic: '六本松院', book: { ok: true, cancel: '前日まで' }, next: [{ id: 'R1', date: add(1), start: '10:00', end: '10:30', menus: ['継続（3割）', 'TBR矯正'], canCancel: true }, { id: 'R2', date: add(8), start: '18:30', end: '19:00', menus: ['継続（3割）'], canCancel: true }],
+      tickets: [{ name: 'TBR矯正5回券', type: '回数券', remain: 3, total: 5, expires: add(10) }, { name: 'マトリックスフリーパス', type: 'フリーパス', remain: null, total: null, expires: add(40) }, { name: '夏のフリーパス', type: 'フリーパス', remain: null, total: null, starts: add(5), expires: add(35) }] },
+  ] });
+  if (['login', 'reg_finish', 'reset_finish'].indexOf(action) >= 0) return wait({ token: 'demo', page: page() });
+  if (action === 'reg_info') return wait({ clinic: '六本松院', expires: add(30) });
+  if (action === 'reg_start' || action === 'reset_start') return wait({ pending: 'p' });
+  if (!getToken()) return fail('ログインしてください', true);
+  if (action === 'logout') return wait(true);
+  if (action === 'checkin_info' || action === 'checkin') { if (action === 'checkin') demoArrived = '10:02'; return wait({ clinic: '六本松院', early: 30, list: [{ rid: 'R0', name: '見本 花子', start: '10:00', menus: ['継続（3割）'], status: demoArrived ? 'done' : 'ok', at: demoArrived }, { rid: 'R9', name: '見本 太郎', start: '11:30', menus: ['TBR矯正'], status: 'early', at: '' }] }); }
   if (action === 'book_info') return wait({ ok: true, prev: { mode: 'ins', keys: ['INS', 'G:TBR矯正'] }, cancel: '前日まで', dates: Array.from({ length: 28 }, (_, i) => add(i + 1)).filter(d => new Date(d + 'T00:00:00').getDay() !== 0),
     items: [{ key: 'INS', label: '保険診療（基本施術）', note: '料金は、保険の負担割合や通院の回数によって変わります', ins: { price: null }, self: null },
       { key: 'G:TBR矯正', label: 'TBR矯正', note: '', ins: { price: 1650 }, self: { price: 3630 } }, { key: 'G:筋膜調整', label: '筋膜調整', note: '', ins: { price: 1650 }, self: { price: 3300 } },
@@ -300,12 +463,9 @@ function demoCall(action, extra) {
       { key: 'M:M21', label: '福岡市鍼', note: '福岡市の鍼灸助成です（受領証が必要です）', ins: { price: null }, self: { price: null } }, { key: 'M:M30', label: 'マトリックス', note: '', ins: { price: 1100 }, self: { price: 1100 } },
       { key: 'G:ヘッドスパ', label: 'ヘッドスパ', note: '', ins: { price: 4400 }, self: { price: 4400 } }] });
   if (action === 'book_times') return wait(new Date(extra.date + 'T00:00:00').getDay() === 3 ? { times: [], message: 'この日は空きがありません。ほかの日をお選びください' } : { times: ['9:30', '10:00', '11:30', '15:00', '15:30', '16:00', '18:30', '19:00'], message: '' });
-  if (action === 'book') return demoCall('me').then(pg => ({ booked: { date: extra.date, time: extra.time, menus: extra.choice.keys.map(k => k === 'INS' ? '保険診療（基本施術）' : k === 'HARI' ? '保険鍼灸' : k.replace(/^G:|^M:/, '')) }, page: pg }));
-  if (action === 'cancel') action = 'me';
-  return new Promise(r => setTimeout(() => r({ clinics: clinics, patients: action === 'me' && !demoLinked ? [] : [
-    { id: 'P1', name: '見本 花子', clinic: '六本松院', book: { ok: true, cancel: '前日まで' }, next: [{ id: 'R1', date: add(1), start: '10:00', end: '10:30', menus: ['継続（3割）', 'TBR矯正'], canCancel: true }, { id: 'R2', date: add(8), start: '18:30', end: '19:00', menus: ['継続（3割）'], canCancel: true }],
-      tickets: [{ name: 'TBR矯正5回券', type: '回数券', remain: 3, total: 5, expires: add(10) }, { name: 'マトリックスフリーパス', type: 'フリーパス', remain: null, total: null, expires: add(40) }] },
-  ] }), 500));
+  if (action === 'book') return wait({ booked: { date: extra.date, time: extra.time, menus: extra.choice.keys.map(k => k === 'INS' ? '保険診療（基本施術）' : k === 'HARI' ? '保険鍼灸' : k.replace(/^G:|^M:/, '')) }, page: page() });
+  if (action === 'unlink') return wait({ patients: [] });
+  return wait(page()); // me・add・cancel
 }
 start();
 </script>
