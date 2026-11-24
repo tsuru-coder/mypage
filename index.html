@@ -92,6 +92,7 @@
   .ci { border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
   .ci .d { font-size: 17px; font-weight: 800; } .ci .m { font-size: 13px; color: var(--sub); }
   .ci.done { border-color: var(--main); background: var(--weak); }
+  .arr { border: 2px solid var(--main); } .arr h3 { margin: 0 0 6px; font-size: 16px; }
   .tk .big.wait { color: var(--warn); }
 </style>
 </head>
@@ -161,7 +162,7 @@ document.getElementById('mLogout').onclick = async () => {
 function render() {
   if (!state.patients.length) return renderEmpty();
   showMenuBtn(true);
-  app.innerHTML = state.patients.map(p => {
+  app.innerHTML = '<div id="arrBox"></div>' + state.patients.map(p => {
     const next = p.next.length ? p.next.map((r, i) => '<div class="resv' + (i === 0 ? ' first' : '') + '">' + (r.canCancel ? '<button class="cx" data-cx="' + esc(r.id) + '" data-pid="' + esc(p.id) + '" data-when="' + esc(jd(r.date) + ' ' + r.start) + '">キャンセル</button>' : '') + '<div class="d">' + jd(r.date) + ' ' + esc(r.start) + '〜' + (i === 0 && daysTo(r.date) <= 1 ? '<span class="tag">' + (daysTo(r.date) === 0 ? '今日' : '明日') + '</span>' : '') + '</div><div class="m">' + esc(r.menus.join('・')) + '</div></div>').join('')
       : '<div class="none">次回のご予約はありません</div>';
     const tks = p.tickets.length ? p.tickets.map(t => {
@@ -177,6 +178,7 @@ function render() {
       '<button class="btn link" data-un="' + esc(p.id) + '">この方の表示をやめる</button></div>';
   }).join('') +
     '<p class="upd">' + (state.patients.some(p => p.next.some(r => r.canCancel)) ? '当日のキャンセル・ご予約の変更は、お電話でご連絡ください' : 'ご予約の変更・キャンセルは、お電話でご連絡ください') + '</p>';
+  drawArrive();
   app.querySelectorAll('[data-book]').forEach(b => b.onclick = () => startBook(b.dataset.book));
   app.querySelectorAll('[data-cx]').forEach(b => b.onclick = async () => {
     if (!confirm(b.dataset.when + ' のご予約をキャンセルしますか？')) return;
@@ -188,6 +190,58 @@ function render() {
     b.disabled = true;
     try { state = await call('unlink', { patientId: b.dataset.un }); render(); } catch (e) { alert(e.message); b.disabled = false; }
   });
+}
+
+// ===== 今日の予約がある日：受付QRの案内とカメラのボタン（マイページのいちばん上） =====
+const hm2m = t => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? m[1] * 60 + Number(m[2]) : NaN; };
+const m2hm = n => Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+function drawArrive() {
+  const box = $('arrBox');
+  if (!box) return;
+  const now = new Date(), today = ymdLocal(now), nm = now.getHours() * 60 + now.getMinutes(), early = state.early || 30;
+  const list = [];
+  state.patients.forEach(p => p.next.filter(r => r.date === today).forEach(r => {
+    const s = hm2m(r.start), e = hm2m(r.end);
+    const st = r.arrived ? 'done' : nm < s - early ? 'early' : nm > (isNaN(e) ? s : e) ? 'late' : 'ok';
+    list.push({ name: p.name, clinic: p.clinic, start: r.start, at: r.at, st: st, from: s - early });
+  }));
+  if (!list.length) { box.innerHTML = ''; return; }
+  const txt = x => x.st === 'done' ? '<b style="color:var(--main-d)">✓ ' + (x.at ? esc(x.at) + ' に' : '') + '受付しました</b>'
+    : x.st === 'early' ? '<span class="note">' + (isNaN(x.from) ? 'ご予約の' + early + '分前' : m2hm(Math.max(0, x.from))) + 'から受付できます</span>'
+    : x.st === 'late' ? '<span class="note" style="color:var(--warn)">ご予約の時間を過ぎています。受付でお声がけください</span>' : '';
+  const can = list.some(x => x.st === 'ok');
+  const html = '<div class="card arr">' + list.map(x => '<div class="ci' + (x.st === 'done' ? ' done' : '') + '"><div class="d">本日 ' + esc(x.start) + ' のご予約があります</div><div class="m">' + esc(x.name) + ' 様　' + esc(x.clinic) + '</div>' + (txt(x) ? '<div style="margin-top:6px">' + txt(x) + '</div>' : '') + '</div>').join('') +
+    (can ? '<p style="margin:4px 0 10px">受付に置いてあるQRコードを読み取って、受付をしてください。</p><button class="btn" id="scanBtn">📷 QRコードを読み取る</button><div class="msg" id="scanMsg"></div>' : '') + '</div>';
+  if (box.dataset.h === html) return; // 変わっていなければ描き直さない
+  box.dataset.h = html; box.innerHTML = html;
+  if (can) $('scanBtn').onclick = scanQr;
+}
+setInterval(drawArrive, 30000); // 時間がきたらボタンを出す
+document.addEventListener('visibilitychange', () => { if (!document.hidden) drawArrive(); });
+/** 読み取った文字が、この院の受付QRなら番号を返す（違えば ''） */
+function checkinCode(text) {
+  let u;
+  try { u = new URL(String(text)); } catch (e) { return ''; }
+  if (u.origin !== 'https://liff.line.me' || u.pathname.replace(/\/$/, '') !== '/' + LIFF_ID) return '';
+  const c = u.searchParams.get('in') || '';
+  return /^[0-9a-zA-Z]{8,64}$/.test(c) ? c : '';
+}
+/** LINE のカメラで受付QRを読み取る（映像は保存しない。読み取った番号だけを窓口へ送る） */
+async function scanQr() {
+  const btn = $('scanBtn'), say = t => { if ($('scanMsg')) $('scanMsg').textContent = t; };
+  const NG = 'カメラを開けませんでした。スマホのカメラで受付のQRコードを読み取るか、受付でお声がけください';
+  say('');
+  let can = demo;
+  try { can = can || liff.isApiAvailable('scanCodeV2'); } catch (e) { /* LINE の準備ができていない */ }
+  if (!can) return say(NG);
+  btn.disabled = true;
+  let r;
+  try { r = demo ? { value: 'https://liff.line.me/' + LIFF_ID + '?in=demodemo' } : await liff.scanCodeV2(); } catch (e) { return say(NG); } finally { btn.disabled = false; }
+  if (!r || !r.value) return; // 読み取らずに閉じた
+  const code = checkinCode(r.value);
+  if (!code) return say('受付のQRコードではないようです。受付に置いてあるQRコードを読み取ってください');
+  pend = { in: code };
+  checkin();
 }
 
 // ===== Web予約（メニュー → 日にち → 時間 → 確認） =====
@@ -446,8 +500,9 @@ function demoCall(action, extra) {
   const add = n => ymdLocal(new Date(Date.now() + n * 86400000));
   const wait = v => new Promise(r => setTimeout(() => r(v), 500));
   const fail = (m, login) => new Promise((_, ng) => setTimeout(() => { const e = new Error(m); e.login = !!login; ng(e); }, 400));
-  const page = () => ({ patients: [
-    { id: 'P1', name: '見本 花子', clinic: '六本松院', book: { ok: true, cancel: '前日まで' }, next: [{ id: 'R1', date: add(1), start: '10:00', end: '10:30', menus: ['継続（3割）', 'TBR矯正'], canCancel: true }, { id: 'R2', date: add(8), start: '18:30', end: '19:00', menus: ['継続（3割）'], canCancel: true }],
+  const soon = new Date(Date.now() + 600000), pt = n => String(n).padStart(2, '0');
+  const page = () => ({ early: 30, patients: [
+    { id: 'P1', name: '見本 花子', clinic: '六本松院', book: { ok: true, cancel: '前日まで' }, next: [{ id: 'R0', date: add(0), start: pt(soon.getHours()) + ':' + pt(soon.getMinutes()), end: '23:59', menus: ['継続（3割）'], canCancel: false, arrived: !!demoArrived, at: demoArrived }, { id: 'R1', date: add(1), start: '10:00', end: '10:30', menus: ['継続（3割）', 'TBR矯正'], canCancel: true }, { id: 'R2', date: add(8), start: '18:30', end: '19:00', menus: ['継続（3割）'], canCancel: true }],
       tickets: [{ name: 'TBR矯正5回券', type: '回数券', remain: 3, total: 5, expires: add(10) }, { name: 'マトリックスフリーパス', type: 'フリーパス', remain: null, total: null, expires: add(40) }, { name: '夏のフリーパス', type: 'フリーパス', remain: null, total: null, starts: add(5), expires: add(35) }] },
   ] });
   if (['login', 'reg_finish', 'reset_finish'].indexOf(action) >= 0) return wait({ token: 'demo', page: page() });
