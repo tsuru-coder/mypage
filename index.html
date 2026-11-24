@@ -440,9 +440,9 @@ async function checkin() {
   showMenuBtn(false); loading('受付しています…');
   try {
     let r = await call('checkin_info', { code: pend.in });
-    // 今「来院済」にできる予約が1つだけなら、そのまま受付する
+    // 今「来院済」にできる予約が1つだけなら、そのまま受付する（受付済み・まだ早い・時間を過ぎた予約は数えない。2つ以上ならボタンで選ぶ）
     const ok = r.list.filter(x => x.status === 'ok');
-    if (ok.length === 1 && r.list.length === 1) r = await call('checkin', { code: pend.in, reservationId: ok[0].rid });
+    if (ok.length === 1) r = await call('checkin', { code: pend.in, reservationId: ok[0].rid });
     renderCheckin(r);
   } catch (e) {
     if (e.login) { setToken(''); return renderLogin(e.message); }
