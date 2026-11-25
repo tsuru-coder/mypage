@@ -202,11 +202,12 @@ function drawArrive() {
   const list = [];
   state.patients.forEach(p => p.next.filter(r => r.date === today).forEach(r => {
     const s = hm2m(r.start), e = hm2m(r.end);
-    const st = r.arrived ? 'done' : nm < s - early ? 'early' : nm > (isNaN(e) ? s : e) ? 'late' : 'ok';
+    const st = r.held ? 'held' : r.arrived ? 'done' : nm < s - early ? 'early' : nm > (isNaN(e) ? s : e) ? 'late' : 'ok';
     list.push({ name: p.name, clinic: p.clinic, start: r.start, at: r.at, st: st, from: s - early });
   }));
   if (!list.length) { box.innerHTML = ''; return; }
   const txt = x => x.st === 'done' ? '<b style="color:var(--main-d)">✓ ' + (x.at ? esc(x.at) + ' に' : '') + '受付しました</b>'
+    : x.st === 'held' ? '<span class="note">来院されたら、受付でお声がけください</span>'
     : x.st === 'early' ? '<span class="note">' + (isNaN(x.from) ? 'ご予約の' + early + '分前' : m2hm(Math.max(0, x.from))) + 'から受付できます</span>'
     : x.st === 'late' ? '<span class="note" style="color:var(--warn)">ご予約の時間を過ぎています。受付でお声がけください</span>' : '';
   const can = list.some(x => x.st === 'ok');
